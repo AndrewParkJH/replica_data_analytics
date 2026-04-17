@@ -1,47 +1,24 @@
+import argparse
 import pandas as pd
 from metadata.uam_schema import UAMSchema
-import json
 from pathlib import Path
-import argparse
 
-parser = argparse.ArgumentParser()
-
-parser.add_argument("--state", type=str, required=True)
-parser.add_argument("--city", type=str, required=True)
-
-args = parser.parse_args()
-
-# Column mapping
 SCHEMA = UAMSchema()
 
-# this file creates a lookup table for the speed
-STATE = args.state
-CITY = args.city
 
-INPUT_FILE_PATH = f"data/raw_replica/{STATE}/{CITY}_{CITY}_Thur.csv"
-TT_OUTPUT_FOLDER = f"data/od_cost_matrix/{STATE}/{CITY}_hourly_od_lookup_tables"
-DIST_OUTPUT_FOLDER = f"data/od_cost_matrix/{STATE}/od_distance_matrix"
-FILE_NAME = f"{CITY}_TT_Matrix"
-
-def save_trip_time_lookup_table(lookup_table, output_folder=TT_OUTPUT_FOLDER):
-
+def save_trip_time_lookup_table(lookup_table, output_folder, file_name):
+    output_folder = Path(output_folder)
     for hour in lookup_table.keys():
         od_matrix = lookup_table[hour]
-
-        # Build filename with zero-padded hour
-        filename = Path(output_folder) / f"{FILE_NAME}_{hour:02d}.csv"
-
-        # Save to CSV; NaNs will appear as empty cells (can be read as N/A)
+        filename = output_folder / f"{file_name}_{hour:02d}.csv"
         od_matrix.to_csv(filename, index=True)
-
         print(f"Saved: {filename}")
-
     print('\t all files saved')
 
 
 def create_hourly_od_lookup_tables(
-    input_csv_path: str = INPUT_FILE_PATH,
-    output_dir: str = TT_OUTPUT_FOLDER,
+    input_csv_path: str,
+    output_dir: str,
     time_col: str = SCHEMA.START_TIME_O,
     origin_col: str = SCHEMA.ORIGIN_TRACT_O,
     dest_col: str = SCHEMA.DESTINATION_TRACT_O,
@@ -54,73 +31,49 @@ def create_hourly_od_lookup_tables(
     average trip duration (in minutes) for trips starting in that hour of day.
     Missing OD entries are left as NaN (N/A).
     """
-
     lookup_table = dict()
 
-    # Ensure output directory exists
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load data
-    # df = pd.read_csv(input_csv_path)
     df = pd.read_csv(input_csv_path, low_memory=False)
 
-    # Parse trip_start_time to datetime and extract hour-of-day
     df[time_col] = pd.to_datetime(df[time_col], format="%H:%M:%S", errors="coerce")
     df["hour_of_day"] = df[time_col].dt.hour
 
-    # Filter data so only driving remains
     df = df[df['primary_mode'].isin(['private_auto', 'auto_passenger', 'on_demand_auto'])]
 
-    # Identify all unique origins and destinations for full OD grid
     all_origins = sorted(df[origin_col].dropna().unique())
     all_dests = sorted(df[dest_col].dropna().unique())
 
-    # Precompute the full OD MultiIndex for reindexing
     full_od_index = pd.MultiIndex.from_product(
         [all_origins, all_dests],
         names=[origin_col, dest_col],
     )
 
-    # Group by origin, destination, and hour, compute mean duration
     grouped = (
         df.groupby([origin_col, dest_col, "hour_of_day"], dropna=True)[duration_col]
           .mean()
           .reset_index()
     )
 
-    # Loop over each hour 0–23 and create a CSV
     for hour in range(24):
-        # Filter for this hour
         hour_df = grouped[grouped["hour_of_day"] == hour]
 
-        # Set OD as index and reindex to full OD grid to insert NaNs for missing combos
         hour_od = (
             hour_df.set_index([origin_col, dest_col])[duration_col]
                    .reindex(full_od_index)
         )
 
-        # Convert to OD matrix (origins as rows, destinations as columns)
         od_matrix = hour_od.unstack(level=1)
-
-        # Optional: sort rows/cols (already sorted by construction, but just in case)
         od_matrix = od_matrix.sort_index(axis=0).sort_index(axis=1)
-
-        # # Build filename with zero-padded hour
-        # filename = output_dir / f"{FILE_NAME}_{hour:02d}.csv"
-        #
-        # # Save to CSV; NaNs will appear as empty cells (can be read as N/A)
-        # od_matrix.to_csv(filename, index=True)
-        #
-        # print(f"Saved: {filename}")
 
         lookup_table[hour] = od_matrix
 
     return lookup_table
 
-def correct_hourly_od_matrices(
-        lookup_table
-):
+
+def correct_hourly_od_matrices(lookup_table):
     """
     Load hourly OD matrices, fill missing entries over time, and save corrected versions.
 
@@ -131,56 +84,43 @@ def correct_hourly_od_matrices(
         * If both exist: fill with their average.
         * If only one exists (first/last hours etc.): fill with that value.
         * If none exist across all hours: leave as NaN.
-    - Saves corrected matrices as CSVs with filenames:
-        `<input_dir>/<corrected_prefix>_<file_name_prefix>_<hour:02d>.csv`
     """
-    corrected_prefix = "corrected"
-
     hours_list = list(range(24))
 
-    # Assume all matrices share the same index/columns
     sample_df = lookup_table[hours_list[0]]
     rows = sample_df.index
     cols = sample_df.columns
 
-    # Deep copies for corrected matrices
     corrected_mats = {h: lookup_table[h].copy() for h in hours_list}
 
-    # 2. For each OD cell, interpolate missing values over time
     for r in rows:
         for c in cols:
-            # Time series of this OD pair across hours
             vals = pd.Series(
                 [lookup_table[h].at[r, c] for h in hours_list],
                 index=hours_list,
                 dtype="float64",
             )
 
-            # If the entire series is NaN, nothing to do
             if vals.isna().all():
                 continue
 
-            # Fill missing hours using nearest prev/next values
             for pos, h in enumerate(hours_list):
                 if pd.isna(vals.iloc[pos]):
                     prev_val = None
                     next_val = None
 
-                    # Search backward in time
                     for p in range(pos - 1, -1, -1):
                         v = vals.iloc[p]
                         if pd.notna(v):
                             prev_val = v
                             break
 
-                    # Search forward in time
                     for p in range(pos + 1, len(hours_list)):
                         v = vals.iloc[p]
                         if pd.notna(v):
                             next_val = v
                             break
 
-                    # Decide fill value
                     if (prev_val is not None) and (next_val is not None):
                         fill_val = 0.5 * (prev_val + next_val)
                     elif prev_val is not None:
@@ -188,24 +128,23 @@ def correct_hourly_od_matrices(
                     elif next_val is not None:
                         fill_val = next_val
                     else:
-                        # No info at any hour; leave NaN
                         continue
 
                     vals.iloc[pos] = fill_val
 
-            # Write back corrected values into each hour's matrix
             for pos, h in enumerate(hours_list):
                 corrected_mats[h].at[r, c] = vals.iloc[pos]
 
     return corrected_mats
 
+
 def create_average_distance_od_matrix(
-    input_csv_path: str = INPUT_FILE_PATH,
-    output_dir: str = DIST_OUTPUT_FOLDER,
+    input_csv_path: str,
+    output_dir: str,
+    output_file_name: str,
     origin_col: str = SCHEMA.ORIGIN_TRACT_O,
     dest_col: str = SCHEMA.DESTINATION_TRACT_O,
     distance_col: str = SCHEMA.DISTANCE_MI_O,
-    output_file_name: str = f"{CITY}_DIST_Matrix",
 ):
     """
     Create a single OD lookup table (one matrix) with average travel distance.
@@ -214,68 +153,66 @@ def create_average_distance_od_matrix(
     average trip distance (in miles) across all trips between that OD pair.
     Missing OD entries are left as NaN (N/A).
     """
-
-    # Ensure output directory exists
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load data
     df = pd.read_csv(input_csv_path, low_memory=False)
 
-    # Filter data so only driving remains
     df = df[df["primary_mode"].isin(["private_auto", "auto_passenger", "on_demand_auto"])]
 
-    # Identify all unique origins and destinations for full OD grid
     all_origins = sorted(df[origin_col].dropna().unique())
     all_dests = sorted(df[dest_col].dropna().unique())
 
-    # Precompute the full OD MultiIndex for reindexing
     full_od_index = pd.MultiIndex.from_product(
         [all_origins, all_dests],
         names=[origin_col, dest_col],
     )
 
-    # Group by origin, destination, compute mean distance
     grouped = (
         df.groupby([origin_col, dest_col], dropna=True)[distance_col]
           .mean()
           .reset_index()
     )
 
-    # Set OD as index and reindex to full OD grid to insert NaNs for missing combos
     od_series = (
         grouped.set_index([origin_col, dest_col])[distance_col]
                .reindex(full_od_index)
     )
 
-    # Convert to OD matrix (origins as rows, destinations as columns)
     od_matrix = od_series.unstack(level=1)
-
-    # Sort rows/cols just to be safe
     od_matrix = od_matrix.sort_index(axis=0).sort_index(axis=1)
 
-    # --------- Correction step: fill missing values ---------
-    global_mean = od_matrix.stack().mean()     # stack() drops NaNs
+    global_mean = od_matrix.stack().mean()
     od_matrix = od_matrix.fillna(global_mean)
-    # ---------------------------------------------------------
 
-    # Save single matrix
-    out_path = Path(output_dir) / f"{output_file_name}.csv"
+    out_path = output_dir / f"{output_file_name}.csv"
     od_matrix.to_csv(out_path, index=True)
-
     print(f"Saved average distance OD matrix to: {out_path}")
 
     return od_matrix
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate OD cost lookup tables from raw Replica data")
+    parser.add_argument("--state", required=True, help="State name (e.g. Illinois)")
+    parser.add_argument("--city", required=True, help="City name (e.g. Chicago)")
+    parser.add_argument("--raw_data_dir", default=None, help="Root raw data dir (default: <cwd>/data/replica_data)")
+    parser.add_argument("--processed_data_dir", default=None, help="Root processed data dir (default: <cwd>/data/processed_data)")
+    args = parser.parse_args()
 
-    # trip time
-    # lookup_table = create_hourly_od_lookup_tables()
-    # lookup_table = correct_hourly_od_matrices(lookup_table)
-    # save_trip_time_lookup_table(lookup_table)
+    cwd = Path.cwd()
+    raw_data_dir = Path(args.raw_data_dir) if args.raw_data_dir else cwd / "data" / "replica_data"
+    processed_data_dir = Path(args.processed_data_dir) if args.processed_data_dir else cwd / "data" / "processed_data"
 
-    # trip distance
-    create_average_distance_od_matrix()
+    input_csv = raw_data_dir / args.state / f"{args.city}_{args.city}_Thur.csv"
+    tt_output = processed_data_dir / "od_cost_matrix" / args.state / f"{args.city}_hourly_od_lookup_tables"
+    dist_output = processed_data_dir / "od_cost_matrix" / args.state / "od_distance_matrix"
 
-    pass
+    lookup = create_hourly_od_lookup_tables(input_csv_path=str(input_csv), output_dir=str(tt_output))
+    lookup = correct_hourly_od_matrices(lookup)
+    save_trip_time_lookup_table(lookup, output_folder=str(tt_output), file_name=f"{args.city}_TT_Matrix")
+    create_average_distance_od_matrix(
+        input_csv_path=str(input_csv),
+        output_dir=str(dist_output),
+        output_file_name=f"{args.city}_DIST_Matrix",
+    )

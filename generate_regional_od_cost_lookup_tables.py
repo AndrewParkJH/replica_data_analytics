@@ -2,24 +2,26 @@ import pandas as pd
 from metadata.uam_schema import UAMSchema
 import json
 from pathlib import Path
+import argparse
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument("--state", type=str, required=True)
+parser.add_argument("--city", type=str, required=True)
+
+args = parser.parse_args()
 
 # Column mapping
 SCHEMA = UAMSchema()
 
 # this file creates a lookup table for the speed
+STATE = args.state
+CITY = args.city
 
-INPUT_CSV = "Chicago_Chicago_Thur.csv"
-
-TIME_COL = "trip_start_time"
-ORIGIN_COL = "origin_trct_2020"
-DEST_COL = "destination_trct_2020"
-
-DURATION_COL = "trip_duration_minutes"
-DISTANCE_COL = "trip_distance_miles"
-
-TT_OUTPUT_FOLDER = "Chicago_hourly_od_lookup_tables"
-DIST_OUTPUT_FOLDER = "OD_distance_matrix"
-FILE_NAME = "Chicago_TT_Matrix"
+INPUT_FILE_PATH = f"data/raw_replica/{STATE}/{CITY}_{CITY}_Thur.csv"
+TT_OUTPUT_FOLDER = f"data/od_cost_matrix/{STATE}/{CITY}_hourly_od_lookup_tables"
+DIST_OUTPUT_FOLDER = f"data/od_cost_matrix/{STATE}/od_distance_matrix"
+FILE_NAME = f"{CITY}_TT_Matrix"
 
 def save_trip_time_lookup_table(lookup_table, output_folder=TT_OUTPUT_FOLDER):
 
@@ -38,12 +40,12 @@ def save_trip_time_lookup_table(lookup_table, output_folder=TT_OUTPUT_FOLDER):
 
 
 def create_hourly_od_lookup_tables(
-    input_csv_path: str = INPUT_CSV,
+    input_csv_path: str = INPUT_FILE_PATH,
     output_dir: str = TT_OUTPUT_FOLDER,
-    time_col: str = TIME_COL,
-    origin_col: str = ORIGIN_COL,
-    dest_col: str = DEST_COL,
-    duration_col: str = DURATION_COL,
+    time_col: str = SCHEMA.START_TIME_O,
+    origin_col: str = SCHEMA.ORIGIN_TRACT_O,
+    dest_col: str = SCHEMA.DESTINATION_TRACT_O,
+    duration_col: str = SCHEMA.DURATION_MIN_O,
 ):
     """
     Create 24 OD lookup tables (one per hour of day) with average travel time.
@@ -198,12 +200,12 @@ def correct_hourly_od_matrices(
     return corrected_mats
 
 def create_average_distance_od_matrix(
-    input_csv_path: str = INPUT_CSV,
+    input_csv_path: str = INPUT_FILE_PATH,
     output_dir: str = DIST_OUTPUT_FOLDER,
-    origin_col: str = ORIGIN_COL,
-    dest_col: str = DEST_COL,
-    distance_col: str = DISTANCE_COL,
-    output_file_name: str = FILE_NAME,
+    origin_col: str = SCHEMA.ORIGIN_TRACT_O,
+    dest_col: str = SCHEMA.DESTINATION_TRACT_O,
+    distance_col: str = SCHEMA.DISTANCE_MI_O,
+    output_file_name: str = f"{CITY}_DIST_Matrix",
 ):
     """
     Create a single OD lookup table (one matrix) with average travel distance.
@@ -269,9 +271,9 @@ def create_average_distance_od_matrix(
 if __name__ == "__main__":
 
     # trip time
-    lookup_table = create_hourly_od_lookup_tables()
-    lookup_table = correct_hourly_od_matrices(lookup_table)
-    save_trip_time_lookup_table(lookup_table)
+    # lookup_table = create_hourly_od_lookup_tables()
+    # lookup_table = correct_hourly_od_matrices(lookup_table)
+    # save_trip_time_lookup_table(lookup_table)
 
     # trip distance
     create_average_distance_od_matrix()

@@ -1,3 +1,4 @@
-/data/raw_replica/
+/data/
 /output/
 /.idea/
+/metadata/__pycache__/

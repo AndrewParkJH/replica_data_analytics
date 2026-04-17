@@ -1,0 +1,88 @@
+{
+  "specification_metadata": {
+    "version": "1.0",
+    "description": "Spatio-temporal demand modeling for UAM based on Replica trip data.",
+    "routing_logic": "nearest_neighbor",
+    "unit_of_analysis": "census_tract_id"
+  },
+  "assumptions": {
+    "assignment_strategy": {
+      "type": "nearest",
+      "definition": "Passengers are assigned to the vertiport with the minimum geographic/Euclidean distance from their origin/destination census tract, regardless of total travel time optimization."
+    },
+    "multimodal_segments": {
+      "option1_ram": [
+        {"segment": "first_mile",
+            "mode": "taxi",
+            "ovtt_min": 5,
+            "node_link": "origin_to_departure_vertiport"
+        },
+        {
+          "segment": "middle_mile",
+          "mode": "uam",
+          "ovtt_min": 10,
+          "ivtt_min": 40,
+          "node_link": "departure_vertiport_to_arrival_vertiport"
+        },
+        {
+          "segment": "last_mile",
+          "mode": "taxi",
+          "ovtt_min": 5,
+          "node_link": "arrival_vertiport_to_destination"
+        }
+      ],
+      "option2_car": [
+        {"segment": "unimodal",
+            "mode": "car",
+            "ovtt_min": 3,
+            "node_link": "origin_to_destination"
+        }
+      ],
+      "option3_": [
+        "place_holder_add_later"
+      ]
+    }
+  },
+  "vertiports": [
+    {
+      "vertiport_id": "UFL1",
+      "city": "UFL",
+      "census_tract_id": "10 (Alachua, FL)",
+      "type": "hub",
+      "coordinates": {
+        "lat": 0,
+        "lon": 0
+      }
+    },
+    {
+      "vertiport_id": "Orlando1",
+      "city": "Orlando",
+      "census_tract_id": "124.03 (Orange, FL)",
+      "type": "spoke",
+      "coordinates": {
+        "lat": 0,
+        "lon": 0
+      }
+    },
+    {
+      "vertiport_id": "Orlando2",
+      "city": "Orlando",
+      "census_tract_id": "168.02 (Orange, FL)",
+      "type": "spoke",
+      "coordinates": {
+        "lat": 0,
+        "lon": 0
+      }
+    },
+    {
+      "vertiport_id": "Orlando3",
+      "city": "Orlando",
+      "census_tract_id": "148.12 (Orange, FL)",
+      "type": "spoke",
+      "coordinates": {
+        "lat": 0,
+        "lon": 0
+      }
+    }
+  ]
+}

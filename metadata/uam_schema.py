@@ -12,3 +12,4 @@ class UAMSchema:
         for raw_name, clean_name in self.mapping.items():
             # Use upper case for constants (e.g., TRIP_ID)
             setattr(self, clean_name.upper(), clean_name)
+            setattr(self, clean_name.upper() + "_O", raw_name)

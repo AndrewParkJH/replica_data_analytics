@@ -1,5 +1,4 @@
-from urllib.parse import uses_relative
-
+import argparse
 import pandas as pd
 from pathlib import Path
 import json
@@ -22,7 +21,7 @@ def load_vertiport_specification(veriport_spec_file):
 
     return vertiports, trip_assumptions
 
-def load_trip_data (o_city, d_city):
+def load_trip_data (state, o_city, d_city):
     """
     Hard-coded file names
 
@@ -30,7 +29,7 @@ def load_trip_data (o_city, d_city):
     trips_csv = f"{o_city}_{d_city}_Thur.csv"
 
     # ---- Load trips and preprocessing----
-    df = pd.read_csv(os.path.join("data","raw_replica",trips_csv), low_memory=False)
+    df = pd.read_csv(os.path.join("data","raw_replica",state,trips_csv), low_memory=False)
     df.rename(columns=SCHEMA.mapping, inplace=True)  # replcae column names
 
     # Filter to driving modes
@@ -48,7 +47,7 @@ def load_trip_data (o_city, d_city):
     return df
 
 
-def load_cost_matrix(o_city, d_city):
+def load_cost_matrix(state, o_city, d_city):
     """
     Hard Coded Function!
     Load hourly OD matrices into a dict {hour: DataFrame}.
@@ -71,10 +70,10 @@ def load_cost_matrix(o_city, d_city):
     }
 
     fm_dist_mat = pd.read_csv(
-        os.path.join("data","od_cost_matrix",od_dist_files["FM"]),
+        os.path.join("data","od_cost_matrix",state,od_dist_files["FM"]),
         index_col=0)
     lm_dist_mat = pd.read_csv(
-        os.path.join("data","od_cost_matrix",od_dist_files["LM"]),
+        os.path.join("data","od_cost_matrix",state,od_dist_files["LM"]),
         index_col=0)
 
     fm_dist_mat.index = fm_dist_mat.index.astype(str)
@@ -96,7 +95,7 @@ def load_cost_matrix(o_city, d_city):
     for key in ['FM', 'LM']:
         matrices = {}
         for h in hours:
-            path = os.path.join("data","od_cost_matrix", od_folder[key], f"{od_prefix[key]}_{h:02d}.csv")
+            path = os.path.join("data","od_cost_matrix", state, od_folder[key], f"{od_prefix[key]}_{h:02d}.csv")
             # Path(od_folder[key]) / f"{od_prefix[key]}_{h:02d}.csv"
 
             df = pd.read_csv(path, index_col=0)
@@ -112,7 +111,7 @@ def load_cost_matrix(o_city, d_city):
     return distance_cost_matrix, time_cost_matrix
 
 def compute_taxi_fare(duration, mile):
-    fare = 2.2 + duration*0.42 + mile*1.6 + 1.7
+    fare = 1 + duration*0.3 + mile*1.3
 
     return fare
 
@@ -125,9 +124,10 @@ def compute_middle_mile_trips (replica_data_row):
     pass
 
 def compute_ram_trip_statistics(
-    veriport_spec_file = "metadata/vertiport_specification.json",
+    veriport_spec_file : str = "config/vertiport_configuration/UIUC.json",
     o_city : str = "Chicago",
-    d_city : str = "UIUC"
+    d_city : str = "UIUC",
+    state  : str = "Illinois"
 ):
     """
     -o [segment_option] : "option1_ram"
@@ -148,17 +148,23 @@ def compute_ram_trip_statistics(
 
     # parameters
     FM_OVTT = trip_segments_choice1[0]['ovtt_min']
-    LM_OVTT = trip_segments_choice1[1]['ovtt_min']
-    MIDDLE_MILE_FLIGHT_MIN = 70
+    MM_OVTT = trip_segments_choice1[1]['ovtt_min']
+    LM_OVTT = trip_segments_choice1[2]['ovtt_min']
+    MIDDLE_MILE_FLIGHT_MIN = trip_segments_choice1[1]['ivtt_min']
     RAM_fare = 100
     DRIVING_OVTT_CONST = 3.0  # minutes, fixed value
     cost_driving_per_mile = 0.6
 
+    fixed_driving_cost = 0
+    if d_city == "Chicago" or "Houston" or "Orlando":
+        fixed_driving_cost = 20
+
+
     # load data
-    df = load_trip_data(o_city, d_city)
+    df = load_trip_data(state, o_city, d_city)
 
     # load cost matrix
-    distance_cost_matrix, time_cost_matrix = load_cost_matrix(o_city, d_city)
+    distance_cost_matrix, time_cost_matrix = load_cost_matrix(state, o_city, d_city)
 
     # First mile
     # ---- Compute first-mile times hour by hour ----
@@ -359,7 +365,7 @@ def compute_ram_trip_statistics(
     # 3) Driving_Fare
     # ------------------------------------------------------------------
     df["Driving_Fare_USD"] = (
-            pd.to_numeric(df[SCHEMA.DISTANCE_MI], errors="coerce") * cost_driving_per_mile
+            pd.to_numeric(df[SCHEMA.DISTANCE_MI], errors="coerce") * cost_driving_per_mile + fixed_driving_cost
     )
 
     # ------------------------------------------------------------------
@@ -390,7 +396,6 @@ def compute_ram_trip_statistics(
     print(f"Saved RAM trip stats to: {output_csv}")
 
     # separated files
-
     # Group by the pair of vertiport IDs
     grouped = df.groupby(['origin_vertiport_id', 'dest_vertiport_id'])
 
@@ -404,7 +409,18 @@ def compute_ram_trip_statistics(
 
     return df
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Run trip data generation with a configuration file')
+    parser.add_argument('-vc', '--vertiport_config', type=str, help='Path to the config.json file', default=None)
+    parser.add_argument('-o', '--o_city', type=str, help='name of the origin city', default=None)
+    parser.add_argument('-d', '--d_city', type=str, help='name of the destination city', default=None)
+    parser.add_argument('-s', '--state', type=str, help='name of state', default=None)
+    return parser.parse_args()
 
 if __name__ == "__main__":
-    df = compute_ram_trip_statistics(o_city="UIUC", d_city="Chicago")
+    args = parse_args()
+    df = compute_ram_trip_statistics(veriport_spec_file = args.vertiport_config,
+                                     o_city=args.o_city,
+                                     d_city=args.d_city,
+                                     state=args.state)
 

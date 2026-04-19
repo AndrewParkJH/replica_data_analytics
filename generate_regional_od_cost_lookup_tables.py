@@ -196,6 +196,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate OD cost lookup tables from raw Replica data")
     parser.add_argument("--state", required=True, help="State name (e.g. Illinois)")
     parser.add_argument("--city", required=True, help="City name (e.g. Chicago)")
+    parser.add_argument("--day", default="Thu", choices=["Thu", "Sat"], help="Day of week (default: Thu)")
     parser.add_argument("--raw_data_dir", default=None, help="Root raw data dir (default: <cwd>/data/replica_data)")
     parser.add_argument("--processed_data_dir", default=None, help="Root processed data dir (default: <cwd>/data/processed_data)")
     args = parser.parse_args()
@@ -204,15 +205,15 @@ if __name__ == "__main__":
     raw_data_dir = Path(args.raw_data_dir) if args.raw_data_dir else cwd / "data" / "replica_data"
     processed_data_dir = Path(args.processed_data_dir) if args.processed_data_dir else cwd / "data" / "processed_data"
 
-    input_csv = raw_data_dir / args.state / f"{args.city}_{args.city}_Thur.csv"
-    tt_output = processed_data_dir / "od_cost_matrix" / args.state / f"{args.city}_hourly_od_lookup_tables"
+    input_csv = raw_data_dir / args.state / f"{args.city}_{args.city}_{args.day}.csv"
+    tt_output = processed_data_dir / "od_cost_matrix" / args.state / f"{args.city}_{args.day}_hourly_od_lookup_tables"
     dist_output = processed_data_dir / "od_cost_matrix" / args.state / "od_distance_matrix"
 
     lookup = create_hourly_od_lookup_tables(input_csv_path=str(input_csv), output_dir=str(tt_output))
     lookup = correct_hourly_od_matrices(lookup)
-    save_trip_time_lookup_table(lookup, output_folder=str(tt_output), file_name=f"{args.city}_TT_Matrix")
+    save_trip_time_lookup_table(lookup, output_folder=str(tt_output), file_name=f"{args.city}_{args.day}_TT_Matrix")
     create_average_distance_od_matrix(
         input_csv_path=str(input_csv),
         output_dir=str(dist_output),
-        output_file_name=f"{args.city}_DIST_Matrix",
+        output_file_name=f"{args.city}_{args.day}_DIST_Matrix",
     )

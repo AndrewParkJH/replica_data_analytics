@@ -1,4 +1,5 @@
 import argparse
+import numpy as np
 import pandas as pd
 from pathlib import Path
 import json
@@ -15,12 +16,13 @@ def load_vertiport_specification(veriport_spec_file):
 
     trip_assumptions = vertiport_spec['assumptions']
     vertiports = vertiport_spec["vertiports"]
+    links = vertiport_spec.get("links", {})
 
-    return vertiports, trip_assumptions
+    return vertiports, trip_assumptions, links
 
 
-def load_trip_data(state, o_city, d_city, raw_data_dir):
-    trips_csv = f"{o_city}_{d_city}_Thur.csv"
+def load_trip_data(state, o_city, d_city, raw_data_dir, day="Thu"):
+    trips_csv = f"{o_city}_{d_city}_{day}.csv"
 
     df = pd.read_csv(Path(raw_data_dir) / state / trips_csv, low_memory=False)
     df.rename(columns=SCHEMA.mapping, inplace=True)
@@ -36,7 +38,7 @@ def load_trip_data(state, o_city, d_city, raw_data_dir):
     return df
 
 
-def load_cost_matrix(state, o_city, d_city, processed_data_dir):
+def load_cost_matrix(state, o_city, d_city, processed_data_dir, day="Thu"):
     """
     Load hourly OD matrices into a dict {hour: DataFrame}.
     Assumes filenames like: <od_prefix>_<HH>.csv
@@ -44,18 +46,18 @@ def load_cost_matrix(state, o_city, d_city, processed_data_dir):
     od_cost_dir = Path(processed_data_dir) / "od_cost_matrix" / state
 
     od_folder = {
-        "FM": od_cost_dir / f"{o_city}_hourly_od_lookup_tables",
-        "LM": od_cost_dir / f"{d_city}_hourly_od_lookup_tables",
+        "FM": od_cost_dir / f"{o_city}_{day}_hourly_od_lookup_tables",
+        "LM": od_cost_dir / f"{d_city}_{day}_hourly_od_lookup_tables",
     }
 
     od_prefix = {
-        "FM": f"{o_city}_TT_Matrix",
-        "LM": f"{d_city}_TT_Matrix",
+        "FM": f"{o_city}_{day}_TT_Matrix",
+        "LM": f"{d_city}_{day}_TT_Matrix",
     }
 
     od_dist_files = {
-        "FM": od_cost_dir / "od_distance_matrix" / f"{o_city}_DIST_Matrix.csv",
-        "LM": od_cost_dir / "od_distance_matrix" / f"{d_city}_DIST_Matrix.csv",
+        "FM": od_cost_dir / "od_distance_matrix" / f"{o_city}_{day}_DIST_Matrix.csv",
+        "LM": od_cost_dir / "od_distance_matrix" / f"{d_city}_{day}_DIST_Matrix.csv",
     }
 
     fm_dist_mat = pd.read_csv(od_dist_files["FM"], index_col=0)
@@ -100,38 +102,59 @@ def compute_ram_trip_statistics(
     raw_data_dir: str,
     processed_data_dir: str,
     output_dir: str,
+    day: str = "Thu",
 ):
     segment_options = ["option1_ram", "option2_car"]
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_csv = output_dir / f"{o_city}_{d_city}_RAM_trip_stats.csv"
+    output_csv = output_dir / f"{o_city}_{d_city}_{day}_RAM_trip_stats.csv"
 
-    vertiports, trip_assumptions = load_vertiport_specification(veriport_spec_file)
+    vertiports, trip_assumptions, links = load_vertiport_specification(veriport_spec_file)
 
     if trip_assumptions['assignment_strategy']['type'] != "nearest":
         raise Exception("current set up only allows \"nearest\" assignment strategy!")
 
     trip_segments_choice1 = trip_assumptions["multimodal_segments"][segment_options[0]]
-    trip_segments_choice2 = trip_assumptions["multimodal_segments"][segment_options[1]]
 
     FM_OVTT = trip_segments_choice1[0]['ovtt_min']
     MM_OVTT = trip_segments_choice1[1]['ovtt_min']
     LM_OVTT = trip_segments_choice1[2]['ovtt_min']
-    MIDDLE_MILE_FLIGHT_MIN = trip_segments_choice1[1]['ivtt_min']
     RAM_fare = 100
     DRIVING_OVTT_CONST = 3.0
     cost_driving_per_mile = 0.6
 
-    fixed_driving_cost = 0
-    if d_city == "Chicago" or "Houston" or "Orlando":
-        fixed_driving_cost = 20
+    # Flight matrices from config links (actual per-OD flight times)
+    nodes     = links["nodes"]
+    node_idx  = {name: i for i, name in enumerate(nodes)}
+    ft_matrix = np.array(links["flight_time_matrix"],     dtype=float)  # minutes
+    fd_matrix = np.array(links["flight_distance_matrix"], dtype=float)  # miles
 
-    df = load_trip_data(state, o_city, d_city, raw_data_dir)
-    distance_cost_matrix, time_cost_matrix = load_cost_matrix(state, o_city, d_city, processed_data_dir)
+    # Per-vertiport parking cost added to driving fare when a trip ends near that vertiport
+    vp_parking = {vp['vertiport_id']: vp.get('fixed_driving_cost_USD', 0) for vp in vertiports}
 
-    df["FM_duration_min"] = pd.NA
-    df["FM_fare_USD"] = pd.NA
+    df = load_trip_data(state, o_city, d_city, raw_data_dir, day=day)
+    distance_cost_matrix, time_cost_matrix = load_cost_matrix(state, o_city, d_city, processed_data_dir, day=day)
+
+    # --- Filter passengers whose tracts are outside the OD matrices ---
+    # The FM matrix covers o_city internal trips; the LM matrix covers d_city internal
+    # trips.  Cross-region passengers whose origin/destination tracts don't appear in
+    # the respective matrix cannot be assigned a vertiport and are dropped here.
+    n_before = len(df)
+    valid_o_tracts = set(distance_cost_matrix["FM"].index)
+    valid_d_tracts = set(distance_cost_matrix["LM"].columns)   # LM: cols = destination tracts
+    df = df[
+        df[SCHEMA.ORIGIN_TRACT].isin(valid_o_tracts) &
+        df[SCHEMA.DESTINATION_TRACT].isin(valid_d_tracts)
+    ].copy()
+    n_after = len(df)
+    if n_before != n_after:
+        print(f"[generate_trips] Dropped {n_before - n_after} of {n_before} passengers "
+              f"with tracts outside the OD matrices ({n_after} remaining).")
+    # -----------------------------------------------------------------------
+
+    df["FM_duration_min"] = np.nan
+    df["FM_fare_USD"]     = np.nan
     df["depart_hour"] = df[SCHEMA.START_TIME].dt.hour
 
     for h in range(24):
@@ -155,94 +178,183 @@ def compute_ram_trip_statistics(
             if not candidate_tracts:
                 raise Exception("not vertiport available for some trip takers")
 
-            routing_options = time_cost_matrix_h.loc[origin_tracts, candidate_tracts]
-            routing_options.index = origin_tracts.index
+            # Some passengers may originate from tracts outside the FM OD matrix
+            # (e.g. suburbs in a different county).  Filter to rows that exist in
+            # the matrix so idxmin never sees an all-NaN row; unmatched passengers
+            # simply keep NaN FM columns and will be car-only downstream.
+            in_matrix = origin_tracts.isin(time_cost_matrix_h.index)
+            if not in_matrix.any():
+                continue
+            origin_tracts_valid = origin_tracts[in_matrix]
+
+            routing_options = time_cost_matrix_h.reindex(
+                index=origin_tracts_valid.values, columns=candidate_tracts
+            )
+            routing_options.index = origin_tracts_valid.index
+
+            # Secondary filter: drop rows where all candidate-tract columns are NaN
+            row_has_data = routing_options.notna().any(axis=1)
+            routing_options = routing_options[row_has_data]
+            if routing_options.empty:
+                continue
+            origin_tracts_valid = origin_tracts_valid[row_has_data]
 
             origin_vertiport_trct = routing_options.idxmin(axis=1)
 
-            df.loc[mask_first, 'origin_vertiport_id'] = origin_vertiport_trct.map(tract_to_vp_id)
-            df.loc[mask_first, 'origin_vertiport_tract'] = origin_vertiport_trct
+            df.loc[origin_vertiport_trct.index, 'origin_vertiport_id']    = origin_vertiport_trct.map(tract_to_vp_id)
+            df.loc[origin_vertiport_trct.index, 'origin_vertiport_tract'] = origin_vertiport_trct
 
             duration_vals = routing_options.min(axis=1)
+            dm_fm = distance_cost_matrix["FM"]
             dist_vals = pd.Series(
-                [distance_cost_matrix["FM"].at[o, d] for o, d in zip(origin_tracts, origin_vertiport_trct)],
-                index=origin_tracts.index
+                [dm_fm.at[o, d] if (o in dm_fm.index and d in dm_fm.columns) else np.nan
+                 for o, d in zip(origin_tracts_valid, origin_vertiport_trct)],
+                index=origin_vertiport_trct.index
             )
 
-            df.loc[mask_first, "FM_duration_min"] = duration_vals.values
-            df.loc[mask_first, "FM_fare_USD"] = compute_taxi_fare(duration=duration_vals.values, mile=dist_vals.values)
+            df.loc[origin_vertiport_trct.index, "FM_duration_min"] = duration_vals.values
+            df.loc[origin_vertiport_trct.index, "FM_fare_USD"] = compute_taxi_fare(
+                duration=duration_vals.values, mile=dist_vals.values
+            )
 
-    df["arrival_time_at_dest_vertiport"] = (df[SCHEMA.START_TIME]
-                                            + pd.to_timedelta(df["FM_duration_min"], unit="m")
-                                            + pd.to_timedelta(FM_OVTT, unit="m")
-                                            + pd.to_timedelta(MIDDLE_MILE_FLIGHT_MIN, unit="m"))
+    # Arrival at origin vertiport: trip start + FM wait + FM ride
+    df["arrival_time_at_origin_vertiport"] = (
+        df[SCHEMA.START_TIME]
+        + pd.to_timedelta(FM_OVTT, unit="m")
+        + pd.to_timedelta(df["FM_duration_min"], unit="m")
+    )
+    df["origin_vertiport_arrival_hour"] = df["arrival_time_at_origin_vertiport"].dt.hour
 
-    df["last_hour"] = df["arrival_time_at_dest_vertiport"].dt.hour
+    # ── Destination vertiport: pick the one minimising total arrival time ──────
+    #
+    # For each candidate destination vertiport k evaluate (all passengers at once):
+    #   arrival_at_dest_vp_k  = arrival_at_origin_vp + MM_OVTT + flight_time(origin→k)
+    #   lm_duration_k         = LM travel time from vertiport-k to each passenger's dest tract
+    #   total_arrival_k       = arrival_at_dest_vp_k + LM_OVTT + lm_duration_k
+    # Then argmin over k gives the fastest path for each passenger.
 
-    df["LM_duration_min"] = pd.NA
-    df["dest_vertiport_id"] = pd.NA
-    df["dest_vertiport_tract"] = pd.NA
-
-    candidate_tracts_d = [
-        vp['census_tract_id'] for vp in vertiports
+    candidate_dest_vps = [
+        vp for vp in vertiports
         if vp['city'] == d_city and vp['census_tract_id'] != '-1'
     ]
-
-    if not candidate_tracts_d:
+    if not candidate_dest_vps:
         raise Exception(f"No vertiports available in destination city: {d_city}")
 
-    tract_to_vp_id_d = {
-        vp['census_tract_id']: vp['vertiport_id']
-        for vp in vertiports
-        if vp['city'] == d_city and vp['census_tract_id'] != '-1'
-    }
+    K = len(candidate_dest_vps)
+    N = len(df)
+    BASE_TS = pd.Timestamp("1900-01-01")
 
-    for h in range(24):
-        time_cost_matrix_h = time_cost_matrix["LM"][h]
-        mask_last = df["last_hour"] == h
-        if mask_last.any():
-            dest_tracts = df.loc[mask_last, SCHEMA.DESTINATION_TRACT]
+    # Map each passenger's origin vertiport to its flight-matrix row index
+    origin_vp_idx_arr = (
+        df["origin_vertiport_id"].map(node_idx).fillna(-1).astype(int).values
+    )
+    dest_tract_arr = df[SCHEMA.DESTINATION_TRACT].astype(str).values
+    dm_lm = distance_cost_matrix["LM"]
 
-            routing_options = time_cost_matrix_h.loc[candidate_tracts_d, dest_tracts]
-            routing_options.columns = dest_tracts.index
+    cand_total_sec   = np.full((N, K), np.inf)   # comparable arrival time (seconds)
+    cand_lm_duration = np.full((N, K), np.nan)
+    cand_lm_fare     = np.full((N, K), np.nan)
+    cand_flight_time = np.full((N, K), np.nan)
+    cand_arr_dest_vp = []                         # one datetime Series per candidate
 
-            chosen_dest_vps_trct = routing_options.idxmin(axis=0)
+    for k, dest_vp in enumerate(candidate_dest_vps):
+        dest_tract_k = dest_vp['census_tract_id']
+        dest_id_k    = dest_vp['vertiport_id']
+        dest_node_k  = node_idx[dest_id_k]
 
-            df.loc[mask_last, "dest_vertiport_tract"] = chosen_dest_vps_trct.values
-            df.loc[mask_last, "dest_vertiport_id"] = chosen_dest_vps_trct.map(tract_to_vp_id_d).values
+        # Flight time for every passenger (vectorised; NaN where origin vp is unknown)
+        valid_origin = origin_vp_idx_arr >= 0
+        flight_times_k = np.full(N, np.nan)
+        flight_times_k[valid_origin] = ft_matrix[origin_vp_idx_arr[valid_origin], dest_node_k]
+        cand_flight_time[:, k] = flight_times_k
 
-            duration_vals = routing_options.min(axis=0)
+        # Arrival at destination vertiport
+        arr_dest_vp_k = (
+            df["arrival_time_at_origin_vertiport"]
+            + pd.to_timedelta(MM_OVTT, unit="m")
+            + pd.to_timedelta(pd.Series(flight_times_k, index=df.index), unit="m")
+        )
+        cand_arr_dest_vp.append(arr_dest_vp_k)
+        last_hour_k = arr_dest_vp_k.dt.hour.values  # (N,) int
 
-            dist_vals = pd.Series(
-                [distance_cost_matrix["LM"].at[v, d] for v, d in zip(chosen_dest_vps_trct, dest_tracts)],
-                index=dest_tracts.index
+        # LM lookup: vectorised per hour bucket
+        lm_dur_k  = np.full(N, np.nan)
+        lm_fare_k = np.full(N, np.nan)
+
+        for h in range(24):
+            hmask = last_hour_k == h
+            if not hmask.any():
+                continue
+            tm_h = time_cost_matrix["LM"][h]
+            if dest_tract_k not in tm_h.index:
+                continue
+
+            lm_row = tm_h.loc[dest_tract_k]          # Series: dest_tract → LM minutes
+            dt_h   = pd.Series(dest_tract_arr[hmask], index=np.where(hmask)[0])
+            in_lm  = dt_h[dt_h.isin(lm_row.index)]
+            lm_dur_k[in_lm.index] = lm_row[in_lm.values].values
+
+            if dest_tract_k in dm_lm.index:
+                dist_row = dm_lm.loc[dest_tract_k]
+                in_dist  = in_lm[in_lm.isin(dist_row.index)]
+                lm_fare_k[in_dist.index] = compute_taxi_fare(
+                    duration=lm_dur_k[in_dist.index],
+                    mile=dist_row[in_dist.values].values,
+                )
+
+        cand_lm_duration[:, k] = lm_dur_k
+        cand_lm_fare[:, k]     = lm_fare_k
+
+        # Total arrival at final destination (only where LM path exists)
+        valid_lm = ~np.isnan(lm_dur_k)
+        if valid_lm.any():
+            vi = np.where(valid_lm)[0]
+            arr_final = (
+                arr_dest_vp_k.iloc[vi]
+                + pd.to_timedelta(LM_OVTT + lm_dur_k[valid_lm], unit="m")
             )
+            cand_total_sec[valid_lm, k] = (arr_final - BASE_TS).dt.total_seconds().values
 
-            df.loc[mask_last, "LM_duration_min"] = duration_vals.values
-            df.loc[mask_last, "LM_fare_USD"] = compute_taxi_fare(
-                duration=duration_vals.values,
-                mile=dist_vals.values
-            )
+    # Choose the candidate with the earliest total arrival for each passenger
+    best_k = np.argmin(cand_total_sec, axis=1)  # (N,)
 
-    df["MM_duration_min"] = MIDDLE_MILE_FLIGHT_MIN
-
-    df["RAM_IVTT_min"] = (
-        df["FM_duration_min"].astype("float64")
-        + df["MM_duration_min"].astype("float64")
-        + df["LM_duration_min"].astype("float64")
+    # Build (N, K) matrix of dest-vertiport arrival times in int64 nanoseconds
+    arr_dest_vp_ns = np.column_stack(
+        [s.values.astype("int64") for s in cand_arr_dest_vp]
     )
 
-    df["RAM_OVTT_min"] = FM_OVTT + LM_OVTT
+    # Assign chosen results (same column names as before)
+    df["dest_vertiport_id"]    = [candidate_dest_vps[k]['vertiport_id']    for k in best_k]
+    df["dest_vertiport_tract"] = [candidate_dest_vps[k]['census_tract_id'] for k in best_k]
+    df["MM_duration_min"]      = cand_flight_time[np.arange(N), best_k]
+    df["LM_duration_min"]      = cand_lm_duration[np.arange(N), best_k]
+    df["LM_fare_USD"]          = cand_lm_fare[np.arange(N), best_k]
 
-    df["RAM_Fare_USD"] = (df["FM_fare_USD"].astype("float64") +
-                          RAM_fare +
-                          df["LM_fare_USD"].astype("float64"))
+    best_arr_ns = arr_dest_vp_ns[np.arange(N), best_k]
+    df["arrival_time_at_dest_vertiport"] = pd.to_datetime(best_arr_ns)
+    df["last_hour"] = df["arrival_time_at_dest_vertiport"].dt.hour
+
+    df["RAM_IVTT_min"] = (
+        pd.to_numeric(df["FM_duration_min"], errors="coerce")
+        + pd.to_numeric(df["MM_duration_min"], errors="coerce")
+        + pd.to_numeric(df["LM_duration_min"], errors="coerce")
+    )
+
+    df["RAM_OVTT_min"] = FM_OVTT + MM_OVTT + LM_OVTT
+
+    df["RAM_Fare_USD"] = (
+        pd.to_numeric(df["FM_fare_USD"],  errors="coerce")
+        + RAM_fare
+        + pd.to_numeric(df["LM_fare_USD"], errors="coerce")
+    )
 
     df["Driving_IVTT_min"] = pd.to_numeric(df[SCHEMA.DURATION_MIN], errors="coerce")
     df["Driving_OVTT_min"] = DRIVING_OVTT_CONST
 
+    # Driving fare: distance cost + parking cost at the passenger's destination vertiport
     df["Driving_Fare_USD"] = (
-        pd.to_numeric(df[SCHEMA.DISTANCE_MI], errors="coerce") * cost_driving_per_mile + fixed_driving_cost
+        pd.to_numeric(df[SCHEMA.DISTANCE_MI], errors="coerce") * cost_driving_per_mile
+        + df["dest_vertiport_id"].map(vp_parking).fillna(0)
     )
 
     income_col = SCHEMA.USER_INCOME
@@ -275,6 +387,7 @@ if __name__ == "__main__":
     parser.add_argument("--o_city", required=True, help="Origin city (e.g. Chicago)")
     parser.add_argument("--d_city", required=True, help="Destination city (e.g. UIUC)")
     parser.add_argument("--vertiport_config", required=True, help="Path to vertiport JSON config")
+    parser.add_argument("--day", default="Thu", choices=["Thu", "Sat"], help="Day of week (default: Thu)")
     parser.add_argument("--raw_data_dir", default=None, help="Root raw data dir (default: <cwd>/data/replica_data)")
     parser.add_argument("--processed_data_dir", default=None, help="Root processed data dir (default: <cwd>/data/processed_data)")
     parser.add_argument("--output_dir", default=None, help="Output dir (default: <cwd>/data/processed_data/demand)")
@@ -290,6 +403,7 @@ if __name__ == "__main__":
         o_city=args.o_city,
         d_city=args.d_city,
         state=args.state,
+        day=args.day,
         raw_data_dir=str(raw_data_dir),
         processed_data_dir=str(processed_data_dir),
         output_dir=str(output_dir),

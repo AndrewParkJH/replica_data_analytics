@@ -12,10 +12,11 @@
     },
     "multimodal_segments": {
       "option1_ram": [
-        {"segment": "first_mile",
-            "mode": "taxi",
-            "ovtt_min": 5,
-            "node_link": "origin_to_departure_vertiport"
+        {
+          "segment": "first_mile",
+          "mode": "taxi",
+          "ovtt_min": 5,
+          "node_link": "origin_to_departure_vertiport"
         },
         {
           "segment": "middle_mile",
@@ -31,10 +32,11 @@
         }
       ],
       "option2_car": [
-        {"segment": "unimodal",
-            "mode": "car",
-            "ovtt_min": 3,
-            "node_link": "origin_to_destination"
+        {
+          "segment": "unimodal",
+          "mode": "car",
+          "ovtt_min": 3,
+          "node_link": "origin_to_destination"
         }
       ],
       "option3_": [
@@ -44,9 +46,9 @@
   },
   "vertiports": [
     {
-      "vertiport_id": "TAMU",
-      "city": "TAMU",
-      "census_tract_id": "21 (Brazos, TX)",
+      "vertiport_id": "UIU",
+      "city": "UIUC",
+      "census_tract_id": "3.01 (Champaign, IL)",
       "type": "hub",
       "fixed_driving_cost_USD": 0,
       "fato_capacity": 12,
@@ -56,21 +58,9 @@
       }
     },
     {
-      "vertiport_id": "IAH",
-      "city": "Houston",
-      "census_tract_id": "9801 (Harris, TX)",
-      "type": "spoke",
-      "fixed_driving_cost_USD": 20,
-      "fato_capacity": 12,
-      "coordinates": {
-        "lat": 0,
-        "lon": 0
-      }
-    },
-    {
-      "vertiport_id": "HDT",
-      "city": "Houston",
-      "census_tract_id": "1000.01 (Harris, TX)",
+      "vertiport_id": "CDT",
+      "city": "Chicago",
+      "census_tract_id": "8419 (Cook, IL)",
       "type": "spoke",
       "fixed_driving_cost_USD": 20,
       "fato_capacity": 6,
@@ -80,9 +70,9 @@
       }
     },
     {
-      "vertiport_id": "HOU",
-      "city": "Houston",
-      "census_tract_id": "9800 (Harris, TX)",
+      "vertiport_id": "ORD",
+      "city": "Chicago",
+      "census_tract_id": "9800 (Cook, IL)",
       "type": "spoke",
       "fixed_driving_cost_USD": 20,
       "fato_capacity": 12,
@@ -92,12 +82,12 @@
       }
     },
     {
-      "vertiport_id": "SGR",
-      "city": "Houston",
-      "census_tract_id": "6728.02 (Fort Bend, TX)",
+      "vertiport_id": "MDW",
+      "city": "Chicago",
+      "census_tract_id": "9801 (Cook, IL)",
       "type": "spoke",
       "fixed_driving_cost_USD": 20,
-      "fato_capacity": 6,
+      "fato_capacity": 12,
       "coordinates": {
         "lat": 0,
         "lon": 0
@@ -105,20 +95,18 @@
     }
   ],
   "links": {
-    "nodes": ["TAMU", "IAH", "HDT", "HOU", "SGR"],
+    "nodes": ["UIU", "CDT", "ORD", "MDW"],
     "flight_time_matrix": [
-      [  0, 34, 39, 43, 39],
-      [ 34,  0, 10, 10, 10],
-      [ 39, 10,  0, 10, 10],
-      [ 43, 10, 10,  0, 10],
-      [ 39, 10, 10, 10,  0]
+      [  0, 55, 55, 50],
+      [ 55,  0, 8, 8],
+      [ 55, 8,  0, 8],
+      [ 50, 8, 8,  0]
     ],
     "flight_distance_matrix": [
-      [  0, 75, 85, 93, 85],
-      [ 75,  0, 15, 15, 15],
-      [ 85, 15,  0, 15, 15],
-      [ 93, 15, 15,  0, 15],
-      [ 85, 15, 15, 15,  0]
+      [  0, 130, 130, 120],
+      [130,   0,  15,  15],
+      [130,  15,   0,  15],
+      [120,  15,  15,   0]
     ]
   }
 }

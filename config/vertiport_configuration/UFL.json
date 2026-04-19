@@ -21,7 +21,6 @@
           "segment": "middle_mile",
           "mode": "uam",
           "ovtt_min": 10,
-          "ivtt_min": 40,
           "node_link": "departure_vertiport_to_arrival_vertiport"
         },
         {
@@ -45,44 +44,81 @@
   },
   "vertiports": [
     {
-      "vertiport_id": "UFL1",
+      "vertiport_id": "UFL",
       "city": "UFL",
       "census_tract_id": "10 (Alachua, FL)",
       "type": "hub",
+      "fixed_driving_cost_USD": 0,
+      "fato_capacity": 10,
       "coordinates": {
         "lat": 0,
         "lon": 0
       }
     },
     {
-      "vertiport_id": "Orlando1",
+      "vertiport_id": "NO",
       "city": "Orlando",
       "census_tract_id": "124.03 (Orange, FL)",
       "type": "spoke",
+      "fixed_driving_cost_USD": 20,
+      "fato_capacity": 6,
       "coordinates": {
         "lat": 0,
         "lon": 0
       }
     },
     {
-      "vertiport_id": "Orlando2",
-      "city": "Orlando",
-      "census_tract_id": "168.02 (Orange, FL)",
-      "type": "spoke",
-      "coordinates": {
-        "lat": 0,
-        "lon": 0
-      }
-    },
-    {
-      "vertiport_id": "Orlando3",
+      "vertiport_id": "SO",
       "city": "Orlando",
       "census_tract_id": "148.12 (Orange, FL)",
       "type": "spoke",
+      "fixed_driving_cost_USD": 20,
+      "fato_capacity": 6,
+      "coordinates": {
+        "lat": 0,
+        "lon": 0
+      }
+    },
+    {
+      "vertiport_id": "MCO",
+      "city": "Orlando",
+      "census_tract_id": "168.02 (Orange, FL)",
+      "type": "spoke",
+      "fixed_driving_cost_USD": 20,
+      "fato_capacity": 12,
+      "coordinates": {
+        "lat": 0,
+        "lon": 0
+      }
+    },
+    {
+      "vertiport_id": "DSN",
+      "city": "Orlando",
+      "census_tract_id": "171.11 (Orange, FL)",
+      "type": "spoke",
+      "fixed_driving_cost_USD": 20,
+      "fato_capacity": 12,
       "coordinates": {
         "lat": 0,
         "lon": 0
       }
     }
-  ]
+  ],
+  "links": {
+    "nodes": ["UFL", "NO", "SO", "MCO", "DSN"],
+    "flight_time_matrix": [
+      [  0, 40, 43, 45, 43],
+      [ 40, 0,  10, 10, 10],
+      [ 43, 10,  0, 10, 10],
+      [ 45, 10, 10,  0, 10],
+      [ 43, 10, 10, 10,  0]
+    ],
+    "flight_distance_matrix": [
+      [  0,  95, 100, 105, 100],
+      [ 95,   0,  15,  15,  15],
+      [100,  15,   0,  15,  15],
+      [105,  15,  15,   0,  15],
+      [100,  15,  15,  15,   0]
+    ]
+  }
 }
